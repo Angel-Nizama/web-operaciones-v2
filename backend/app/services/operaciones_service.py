@@ -26,11 +26,11 @@ class OperacionesService(BaseService):
         try:
             current_app.logger.info(f"Processing file: {file_path}")
             if file_path.endswith('.xlsx'):
-                df = pd.read_excel(file_path, engine='openpyxl')
+                df = pd.read_excel(file_path, engine='openpyxl', dtype={'Phone Number 1': str, 'Phone Number 2': str})
             elif file_path.endswith('.xls'):
-                df = pd.read_excel(file_path, engine='xlrd')
+                df = pd.read_excel(file_path, engine='xlrd', dtype={'Phone Number 1': str, 'Phone Number 2': str})
             else:
-                df = pd.read_csv(file_path)
+                df = pd.read_csv(file_path, dtype={'Phone Number 1': str, 'Phone Number 2': str})
 
             df = df.dropna(how='all')
             required_columns = {'Date', 'Time', 'Phone Number 1', 'Phone Number 2', 'Amount'}
