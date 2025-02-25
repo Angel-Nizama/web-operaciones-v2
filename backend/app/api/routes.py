@@ -2,7 +2,8 @@ from flask import jsonify, request, current_app
 from werkzeug.utils import secure_filename
 from app.api import bp
 from app.services.operaciones_service import OperacionesService
-from exceptions import ValidationError, ProcessingError
+from app.services import afiliados_service
+from app.utils.exceptions import ValidationError, ProcessingError
 from functools import wraps
 
 operaciones_service = OperacionesService()
@@ -39,7 +40,7 @@ def upload_file():
     
     return jsonify({
         "success": True,
-        "message": f"Se procesaron {len(result['processed_files']} archivos con {result['total_records']} registros.",
+        "message": f"Se procesaron {len(result['processed_files'])} archivos con {result['total_records']} registros.",
         "processed_files": result['processed_files'],
         "total_records": result['total_records']
     })

@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app import db
 from app.models.operacion import Operacion
 from app.services.base_service import BaseService
-from exceptions import ValidationError, ProcessingError
+from app.utils.exceptions import ValidationError, ProcessingError
 
 class OperacionesService(BaseService):
     def __init__(self):
