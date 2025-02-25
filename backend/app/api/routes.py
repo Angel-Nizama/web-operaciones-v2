@@ -1,48 +1,71 @@
-from flask import jsonify, request
+from flask import jsonify, request, current_app
+from werkzeug.utils import secure_filename
 from app.api import bp
-from app.services import operaciones_service
-import pandas as pd
-from werkzeug.exceptions import BadRequest
+from app.services.operaciones_service import OperacionesService
+from exceptions import ValidationError, ProcessingError
+from functools import wraps
 
-@bp.route('/operaciones/historico', methods=['POST'])
-def get_historico():
-    """Obtiene el histórico de operaciones con filtros"""
-    try:
-        filtros = request.get_json() or {}
-        resultado = operaciones_service.get_historico(filtros)
-        return jsonify(resultado)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+operaciones_service = OperacionesService()
 
-@bp.route('/operaciones/<int:id>', methods=['DELETE'])
-def delete_operacion(id):
-    """Elimina una operación por su ID"""
-    try:
-        if operaciones_service.delete(id):
-            return jsonify({'message': 'Operación eliminada correctamente'})
-        return jsonify({'error': 'Operación no encontrada'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+def handle_errors(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except ValidationError as e:
+            current_app.logger.warning(f"Validation error: {e}")
+            return jsonify({"error": str(e)}), 400
+        except ProcessingError as e:
+            current_app.logger.error(f"Processing error: {e}")
+            return jsonify({"error": str(e)}), 422
+        except Exception as e:
+            current_app.logger.error(f"Unexpected error: {e}")
+            return jsonify({"error": "Unexpected error"}), 500
+    return wrapper
 
-@bp.route('/operaciones/upload', methods=['POST'])
-def upload_operaciones():
-    """Procesa archivo de operaciones"""
+@bp.route('/upload', methods=['POST'])
+@handle_errors
+def upload_file():
     if 'file' not in request.files:
-        raise BadRequest('No se encontró el archivo')
+        raise ValidationError("No se encontró el archivo")
     
-    file = request.files['file']
-    if not file.filename:
-        raise BadRequest('No se seleccionó ningún archivo')
-
-    try:
-        # Leer el archivo con pandas
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(file)
-        else:
-            df = pd.read_excel(file)
-
-        resultado = operaciones_service.procesar_archivo(df)
-        return jsonify(resultado)
+    files = request.files.getlist('file')
+    valid_files = [file for file in files if file and operaciones_service.allowed_file(file.filename)]
     
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    if not valid_files:
+        raise ValidationError("Archivos no permitidos o inválidos")
+
+    result = operaciones_service.procesar_archivos(valid_files)
+    
+    return jsonify({
+        "success": True,
+        "message": f"Se procesaron {len(result['processed_files']} archivos con {result['total_records']} registros.",
+        "processed_files": result['processed_files'],
+        "total_records": result['total_records']
+    })
+
+@bp.route('/historico', methods=['POST'])
+@handle_errors
+def get_historico():
+    filtros = request.get_json() or {}
+    resultado = operaciones_service.get_historico(filtros)
+    return jsonify({
+        "success": True,
+        "data": resultado['data'],
+        "pagination": resultado['pagination'],
+        "montoTotal": resultado['montoTotal'],
+        "total": resultado['total']
+    })
+
+@bp.route('/delete/operaciones/<int:id>', methods=['DELETE'])
+@handle_errors
+def delete_operacion(id):
+    if operaciones_service.delete(id):
+        return jsonify({"success": True, "message": "Operación eliminada correctamente"})
+    raise ValidationError("Operación no encontrada")
+
+@bp.route('/delete_all', methods=['DELETE'])
+@handle_errors
+def delete_all():
+    operaciones_service.delete_all()
+    return jsonify({"success": True, "message": "Histórico eliminado correctamente"})
