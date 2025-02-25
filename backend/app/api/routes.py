@@ -3,6 +3,7 @@ from werkzeug.utils import secure_filename
 from app.api import bp
 from app.services.operaciones_service import OperacionesService
 from app.services import afiliados_service
+from app.services import emparejamiento_service
 from app.utils.exceptions import ValidationError, ProcessingError
 from functools import wraps
 
@@ -70,3 +71,92 @@ def delete_operacion(id):
 def delete_all():
     operaciones_service.delete_all()
     return jsonify({"success": True, "message": "Histórico eliminado correctamente"})
+
+@bp.route('/upload_afiliados', methods=['POST'])
+@handle_errors
+def upload_afiliados():
+    """Procesa archivo de afiliados"""
+    if 'file' not in request.files:
+        raise ValidationError("No se encontró el archivo")
+    
+    file = request.files['file']
+    if not file or not file.filename:
+        raise ValidationError("No se seleccionó ningún archivo")
+    
+    resultado = afiliados_service.procesar_archivo_afiliados(file)
+    return jsonify(resultado)
+
+@bp.route('/afiliados', methods=['POST'])
+@handle_errors
+def get_afiliados():
+    """Obtiene lista de afiliados con filtros"""
+    filtros = request.json or {}
+    resultado = afiliados_service.get_afiliados(filtros)
+    return jsonify(resultado)
+
+@bp.route('/buscar_afiliado', methods=['POST'])
+@handle_errors
+def buscar_afiliado():
+    """Busca afiliados por texto y tipo"""
+    texto = request.json.get('texto', '').strip()
+    tipo = request.json.get('tipo', 'nombre')
+    
+    resultados = afiliados_service.buscar_afiliado(texto, tipo)
+    return jsonify(resultados)
+
+
+@bp.route('/emparejador/afiliados', methods=['GET'])
+@handle_errors
+def get_afiliados_por_rango():
+    """Obtiene afiliados para un rango específico"""
+    rango_inicio = request.args.get('rango_inicio', type=float)
+    rango_fin = request.args.get('rango_fin', type=float)
+    
+    if rango_inicio is None or rango_fin is None:
+        raise ValidationError("Rango de montos requerido")
+        
+    return jsonify(emparejamiento_service.get_afiliados_por_rango(rango_inicio, rango_fin))
+
+@bp.route('/emparejador/afiliados', methods=['POST'])
+@handle_errors
+def agregar_afiliado_rango():
+    """Agrega un afiliado a un rango"""
+    data = request.json
+    return jsonify(emparejamiento_service.agregar_afiliado_rango(data))
+
+@bp.route('/emparejador/afiliados/<int:id>', methods=['DELETE'])
+@handle_errors
+def eliminar_afiliado_rango(id):
+    """Elimina un afiliado de un rango"""
+    return jsonify(emparejamiento_service.eliminar_afiliado_rango(id))
+
+@bp.route('/emparejador/afiliados/rango', methods=['DELETE'])
+@handle_errors
+def eliminar_afiliados_rango():
+    """Elimina todos los afiliados de un rango específico"""
+    rango_inicio = request.args.get('rango_inicio', type=float)
+    rango_fin = request.args.get('rango_fin', type=float)
+    
+    if rango_inicio is None or rango_fin is None:
+        raise ValidationError("Rango de montos requerido")
+        
+    return jsonify(emparejamiento_service.eliminar_afiliados_rango(rango_inicio, rango_fin))
+
+@bp.route('/emparejador/afiliados/todos', methods=['DELETE'])
+@handle_errors
+def eliminar_todos_afiliados():
+    """Elimina todos los afiliados de todos los rangos"""
+    return jsonify(emparejamiento_service.eliminar_todos_afiliados())
+
+@bp.route('/emparejador/calcular', methods=['POST'])
+@handle_errors
+def calcular_emparejamientos():
+    """Calcula emparejamientos óptimos entre afiliados"""
+    filtros = request.json or {}
+    return jsonify(emparejamiento_service.calcular_emparejamientos(filtros))
+
+@bp.route('/emparejador/detalles/<afiliado1>/<afiliado2>', methods=['GET'])
+@handle_errors
+def obtener_detalles_emparejamiento(afiliado1, afiliado2):
+    """Obtiene detalles de un emparejamiento específico"""
+    return jsonify(emparejamiento_service.obtener_detalles_emparejamiento(afiliado1, afiliado2))
