@@ -1,44 +1,59 @@
 .DS_Store
-node_modules
-/dist
+node_modules/
+dist/
 
-# Archivos locales env
-.env.local
-.env.*.local
+# ⚠️ Archivos locales de configuración y credenciales
+.env
+.env.*
+config.py
 
-# Archivos de log
+# ⚠️ Base de datos local
+instance/
+backend/instance/
+backend/instance/*.db*
+backend/instance/*.sqlite*
+
+# ⚡ Archivos de migraciones de Flask (pueden regenerarse)
+migrations/
+backend/migrations/
+backend/migrations/versions/
+
+# 🐍 Ignorar archivos compilados de Python y caché
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 🛠 Archivos de configuración de dependencias (Opcional)
+package-lock.json
+
+# 📂 Caché de pruebas y logs
+backend/tests/__pycache__/
+/coverage
+/tests/e2e/reports/
+selenium-debug.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Archivos del editor y del IDE
-.idea
-.vscode
+# ⚙️ Archivos del editor y del IDE
+.idea/
+.vscode/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# Archivos de prueba/cobertura
-/coverage
-/tests/e2e/reports/
-selenium-debug.log
-
-# Archivos temporales
+# 🔧 Archivos temporales
 *.tmp
 *.bak
 *.swp
 *~
-
-# Archivos específicos del sistema
 Thumbs.db
 desktop.ini
 
-venv/
-
-
-__pycache__/
-*.pyc
-*.pyo
+# 🚀 Archivos de configuración de Vue.js
+web-operaciones-v2/.env.development
+web-operaciones-v2/.env.production
