@@ -49,15 +49,22 @@ def upload_file():
 @bp.route('/historico', methods=['POST'])
 @handle_errors
 def get_historico():
-    filtros = request.get_json() or {}
-    resultado = operaciones_service.get_historico(filtros)
-    return jsonify({
-        "success": True,
-        "data": resultado['data'],
-        "pagination": resultado['pagination'],
-        "montoTotal": resultado['montoTotal'],
-        "total": resultado['total']
-    })
+    current_app.logger.info(f"Recibido request: {request.get_json()}")
+    try:
+        filtros = request.get_json() or {}
+        resultado = operaciones_service.get_historico(filtros)
+        return jsonify({
+            "success": True,
+            "data": resultado['data'],
+            "pagination": resultado['pagination'],
+            "montoTotal": resultado['montoTotal'],
+            "total": resultado['total']
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error en get_historico: {str(e)}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 @bp.route('/delete/operaciones/<int:id>', methods=['DELETE'])
 @handle_errors

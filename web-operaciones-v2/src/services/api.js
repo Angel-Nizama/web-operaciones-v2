@@ -12,7 +12,7 @@ const apiClient = axios.create({
 
 // Cache para manejar el throttling de peticiones
 const requestCache = new Map();
-const THROTTLE_TIME = 5000; // 5 segundos entre peticiones iguales
+const THROTTLE_TIME = 2000; // 2 segundos entre peticiones iguales
 
 // Configuración de reintentos
 const MAX_RETRIES = 3;
@@ -150,6 +150,7 @@ function handleApiError(error) {
   
   if (error.response) {
     // Error de respuesta del servidor
+    console.error('Respuesta del servidor:', error.response.data);
     const serverError = error.response.data?.error || error.response.statusText;
     errorMessage = `Error del servidor: ${serverError}`;
   } else if (error.request) {

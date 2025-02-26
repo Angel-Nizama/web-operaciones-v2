@@ -115,7 +115,12 @@ class OperacionesService(BaseService):
         }
 
     def get_historico(self, filtros):
-        params = []
+        """Obtiene el histórico de operaciones con filtros"""
+        # Logueo para diagnóstico
+        self.verificar_tabla()
+        current_app.logger.info(f"DATABASE_URL: {current_app.config['SQLALCHEMY_DATABASE_URI']}")
+        
+        params = {}
         base_query = """
             WITH operaciones_filtradas AS (
                 SELECT 
@@ -140,29 +145,65 @@ class OperacionesService(BaseService):
                 FROM operaciones o
                 WHERE 1=1
         """
+        
         persona1 = filtros.get('nombre1', '')
         params = {'persona1': persona1}
 
+        # Construir condiciones WHERE solo si los filtros tienen valores
         where_clauses = []
-        if 'nombre1' in filtros:
+        
+        if persona1:  # Solo añadir si no está vacío
             where_clauses.append("(o.nombre1 = :nombre1 OR o.nombre2 = :nombre1)")
             params['nombre1'] = persona1
-        if 'nombre2' in filtros and 'nombre1' not in filtros:
+            
+        if filtros.get('nombre2') and not filtros.get('nombre1'):
             persona2 = filtros.get('nombre2')
             where_clauses.append("(o.nombre1 = :nombre2 OR o.nombre2 = :nombre2)")
             params['nombre2'] = persona2
-        if 'fecha_desde' in filtros:
+            
+        if filtros.get('fecha_desde') and filtros.get('fecha_desde').strip():
             where_clauses.append("o.fecha >= :fecha_desde")
             params['fecha_desde'] = filtros['fecha_desde']
-        if 'fecha_hasta' in filtros:
+            
+        if filtros.get('fecha_hasta') and filtros.get('fecha_hasta').strip():
             where_clauses.append("o.fecha <= :fecha_hasta")
             params['fecha_hasta'] = filtros['fecha_hasta']
 
+        # Añadir cláusulas WHERE a la consulta
         if where_clauses:
             base_query += " AND " + " AND ".join(where_clauses)
         base_query += ")"
 
-        final_query = """
+        # Consulta para obtener la cantidad total y suma de montos
+        count_query = f"{base_query} SELECT COUNT(*) as total, SUM(monto) as total_monto FROM operaciones_filtradas"
+        
+        # Logueo para diagnóstico
+        current_app.logger.info(f"Consulta base generada:\n{base_query} SELECT * FROM operaciones_filtradas")
+        current_app.logger.info(f"Parámetros utilizados: {params}")
+        
+        # Obtener total de registros en la tabla para comparación
+        total_operaciones = db.session.query(db.func.count()).select_from(Operacion).scalar()
+        current_app.logger.info(f"Total de registros en la tabla `operaciones`: {total_operaciones}")
+        
+        # Ejecutar consulta de conteo
+        count_result = db.session.execute(text(count_query), params).fetchone()
+        total = count_result.total if count_result else 0
+        
+        # Manejar correctamente el valor NULL en total_monto
+        total_monto = 0
+        if count_result and count_result.total_monto is not None:
+            total_monto = float(count_result.total_monto)
+        
+        current_app.logger.info(f"Resultado de `COUNT`: Total registros={total}, Total monto={total_monto}")
+        
+        # Obtener datos para la página actual
+        page = int(filtros.get('page', 1))
+        per_page = int(filtros.get('per_page', 10))
+        offset = (page - 1) * per_page
+
+        # Consulta final para los datos de la página
+        final_query = f"""
+            {base_query} 
             SELECT 
                 f.id,
                 datetime(f.fecha || ' ' || f.hora) as fecha_completa,
@@ -174,21 +215,14 @@ class OperacionesService(BaseService):
             FROM operaciones_filtradas f
             LEFT JOIN afiliados a1 ON f.nombre1_ordenado = a1.numero
             LEFT JOIN afiliados a2 ON f.nombre2_ordenado = a2.numero
+            ORDER BY fecha_completa DESC 
+            LIMIT :per_page OFFSET :offset
         """
-
-        page = int(filtros.get('page', 1))
-        per_page = int(filtros.get('per_page', 10))
-        offset = (page - 1) * per_page
-
-        count_query = f"{base_query} SELECT COUNT(*) as total, SUM(monto) as total_monto FROM operaciones_filtradas"
-        count_result = db.session.execute(text(count_query), params).fetchone()
-        total = count_result.total if count_result else 0
-        total_monto = count_result.total_monto if count_result else 0
-
-        full_query = f"{base_query} {final_query} ORDER BY fecha_completa DESC LIMIT :per_page OFFSET :offset"
-        params.update({'per_page': per_page, 'offset': offset})
-        result = db.session.execute(text(full_query), params)
         
+        params.update({'per_page': per_page, 'offset': offset})
+        result = db.session.execute(text(final_query), params)
+        
+        # Formatear resultados para la respuesta
         data = [{
             'id': row.id,
             'fecha': row.fecha_completa,
@@ -196,14 +230,17 @@ class OperacionesService(BaseService):
             'nombre2': row.nombre2_display,
             'monto': row.monto
         } for row in result]
+        
+        current_app.logger.info(f"Registros obtenidos en la consulta final: {len(data)}")
 
+        # Devolver respuesta formateada
         return {
             "data": data,
             "pagination": {
                 "total": total,
                 "page": page,
                 "per_page": per_page,
-                "pages": (total + per_page - 1) // per_page
+                "pages": (total + per_page - 1) // per_page if per_page > 0 else 1
             },
             "montoTotal": float(total_monto),
             "total": total
@@ -217,3 +254,20 @@ class OperacionesService(BaseService):
         except Exception as e:
             db.session.rollback()
             raise ProcessingError(f"Error eliminando operaciones: {str(e)}")
+        
+    def verificar_tabla(self):
+        """Verifica la estructura y datos de la tabla operaciones"""
+        try:
+            # Verificar estructura
+            inspector = db.inspect(db.engine)
+            columns = inspector.get_columns('operaciones')
+            current_app.logger.info(f"Columnas en tabla operaciones: {[col['name'] for col in columns]}")
+            
+            # Obtener primeros 5 registros para depuración
+            ops = Operacion.query.limit(5).all()
+            current_app.logger.info(f"Primeros 5 registros: {[op.to_dict() for op in ops]}")
+            
+            return True
+        except Exception as e:
+            current_app.logger.error(f"Error verificando tabla: {str(e)}")
+            return False
