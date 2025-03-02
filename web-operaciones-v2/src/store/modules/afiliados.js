@@ -1,3 +1,6 @@
+// File: src/store/modules/afiliados.js
+// Fixed version with proper action names and structure
+
 import afiliadosService from '@/services/afiliadosService';
 
 export default {
@@ -209,8 +212,9 @@ export default {
     
     /**
      * Eliminar todos los afiliados
+     * FIX: Renamed from 'eliminarTodos' to 'eliminarTodo' to match component call
      */
-    async eliminarTodos({ dispatch, commit }) {
+    async eliminarTodo({ dispatch, commit }) {
       try {
         commit('SET_CARGANDO', true);
         const response = await afiliadosService.eliminarTodos();
@@ -224,7 +228,7 @@ export default {
         }
       } catch (error) {
         commit('SET_ERROR', error.message || 'Error de conexión');
-        console.error('Error en eliminarTodos:', error);
+        console.error('Error en eliminarTodo:', error);
         return { success: false, message: error.message || 'Error de conexión' };
       } finally {
         commit('SET_CARGANDO', false);
@@ -277,9 +281,12 @@ export default {
       } finally {
         commit('SET_CARGANDO', false);
       }
-    }
-  },
+    },
 
+    /**
+     * Actualizar estados de afiliados basados en actividad reciente
+     * FIX: Moved into actions object to make it a proper Vuex action
+     */
     async actualizarEstadosPorActividad({ dispatch, commit }) {
       try {
         commit('SET_CARGANDO', true);
@@ -299,6 +306,7 @@ export default {
       } finally {
         commit('SET_CARGANDO', false);
       }
+    }
   },
   
   getters: {

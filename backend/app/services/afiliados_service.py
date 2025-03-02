@@ -8,6 +8,7 @@ import pandas as pd
 import os
 import tempfile
 from werkzeug.utils import secure_filename
+from datetime import datetime, timedelta
 
 class AfiliadosService(BaseService):
     def __init__(self):
@@ -283,11 +284,13 @@ class AfiliadosService(BaseService):
             # 1. Actualizar todos a inactivos primero
             db.session.execute(text("UPDATE afiliados SET estado = 'Inactivo'"))
             
-            # 2. Luego actualizar solo los activos
+            # 2. Luego actualizar solo los activos uno por uno
             if afiliados_activos:
-                placeholders = ','.join(['?' for _ in afiliados_activos])
-                sql_update = text(f"UPDATE afiliados SET estado = 'Activo' WHERE numero IN ({placeholders})")
-                db.session.execute(sql_update, list(afiliados_activos))
+                for numero in afiliados_activos:
+                    db.session.execute(
+                        text("UPDATE afiliados SET estado = 'Activo' WHERE numero = :numero"),
+                        {'numero': numero}
+                    )
             
             db.session.commit()
             
@@ -306,3 +309,49 @@ class AfiliadosService(BaseService):
             db.session.rollback()
             current_app.logger.error(f"Error actualizando estados por actividad: {str(e)}")
             raise ProcessingError(f"Error actualizando estados: {str(e)}")
+            """Actualiza el estado de los afiliados basado en su actividad en los últimos 3 meses"""
+            try:
+                # Calcular la fecha de hace 3 meses
+                fecha_limite = datetime.now().date() - timedelta(days=90)
+                
+                # Obtener afiliados activos (participaron en operaciones recientes)
+                sql_afiliados_activos = text("""
+                    SELECT DISTINCT 
+                        CASE 
+                            WHEN o.nombre1 LIKE '%[0-9]%' THEN o.nombre1
+                            ELSE o.nombre2
+                        END as numero_afiliado
+                    FROM operaciones o
+                    WHERE o.fecha >= :fecha_limite
+                """)
+                
+                # Ejecutar consulta
+                result = db.session.execute(sql_afiliados_activos, {'fecha_limite': fecha_limite})
+                afiliados_activos = {row.numero_afiliado for row in result}
+                
+                # 1. Actualizar todos a inactivos primero
+                db.session.execute(text("UPDATE afiliados SET estado = 'Inactivo'"))
+                
+                # 2. Luego actualizar solo los activos
+                if afiliados_activos:
+                    placeholders = ','.join(['?' for _ in afiliados_activos])
+                    sql_update = text(f"UPDATE afiliados SET estado = 'Activo' WHERE numero IN ({placeholders})")
+                    db.session.execute(sql_update, list(afiliados_activos))
+                
+                db.session.commit()
+                
+                # Contar para estadísticas
+                total_activos = db.session.query(Afiliado).filter(Afiliado.estado == 'Activo').count()
+                total = db.session.query(Afiliado).count()
+                
+                return {
+                    "success": True,
+                    "message": f"Estados actualizados. {total_activos} de {total} afiliados activos.",
+                    "activos": total_activos,
+                    "total": total
+                }
+                
+            except Exception as e:
+                db.session.rollback()
+                current_app.logger.error(f"Error actualizando estados por actividad: {str(e)}")
+                raise ProcessingError(f"Error actualizando estados: {str(e)}")
