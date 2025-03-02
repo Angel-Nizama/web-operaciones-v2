@@ -28,14 +28,40 @@
         </div>
         <div class="acciones-resumen">
           <button 
+            class="btn btn-primario" 
+            @click="mostrarFormularioCreacion"
+          >
+            Agregar Afiliado
+          </button>
+          <button 
+            class="btn btn-secundario" 
+            @click="actualizarEstados"
+            :disabled="cargando"
+          >
+            Actualizar Estados
+          </button>
+          <button 
             class="btn btn-secundario" 
             @click="exportarDatos" 
             :disabled="!hayDatos"
           >
             Exportar
           </button>
+          <button 
+            class="btn btn-peligro" 
+            @click="confirmarBorrarTodo" 
+            :disabled="!hayDatos"
+          >
+            Borrar Todo
+          </button>
         </div>
       </div>
+    </div>
+
+    <!-- Información sobre estados -->
+    <div class="info-estados">
+      <p><strong>Nota:</strong> Un afiliado se considera <span class="estado-badge estado-activo">Activo</span> si ha participado en operaciones en los últimos 3 meses.</p>
+      <p>De lo contrario, se considera <span class="estado-badge estado-inactivo">Inactivo</span>. Los estados se actualizan automáticamente al cargar afiliados u operaciones.</p>
     </div>
 
     <!-- Buscador -->
@@ -150,6 +176,110 @@
       @cambiar-pagina="cambiarPagina"
       @cambiar-items="cambiarItemsPorPagina"
     />
+
+    <!-- Modal para Crear Afiliado -->
+    <Teleport to="body">
+      <div v-if="mostrarFormulario" class="modal-overlay" @click.self="cerrarFormulario">
+        <div class="modal-container">
+          <div class="modal-header">
+            <h3>{{ modoEdicion ? 'Editar Afiliado' : 'Agregar Nuevo Afiliado' }}</h3>
+            <button class="modal-close" @click="cerrarFormulario">&times;</button>
+          </div>
+          <div class="modal-body">
+            <form @submit.prevent="guardarAfiliado">
+              <div class="form-group">
+                <label for="numero">Número *</label>
+                <input 
+                  id="numero" 
+                  v-model="formAfiliado.numero" 
+                  class="form-control" 
+                  required
+                  placeholder="Número de afiliado"
+                >
+              </div>
+              <div class="form-group">
+                <label for="nombre">Nombre *</label>
+                <input 
+                  id="nombre" 
+                  v-model="formAfiliado.nombre" 
+                  class="form-control" 
+                  required
+                  placeholder="Nombre"
+                >
+              </div>
+              <div class="form-group">
+                <label for="apellido_paterno">Apellido Paterno *</label>
+                <input 
+                  id="apellido_paterno" 
+                  v-model="formAfiliado.apellido_paterno" 
+                  class="form-control" 
+                  required
+                  placeholder="Apellido paterno"
+                >
+              </div>
+              <div class="form-group">
+                <label for="apellido_materno">Apellido Materno *</label>
+                <input 
+                  id="apellido_materno" 
+                  v-model="formAfiliado.apellido_materno" 
+                  class="form-control" 
+                  required
+                  placeholder="Apellido materno"
+                >
+              </div>
+              <div class="form-group">
+                <label for="dni">DNI *</label>
+                <input 
+                  id="dni" 
+                  v-model="formAfiliado.dni" 
+                  class="form-control" 
+                  required
+                  placeholder="DNI"
+                >
+              </div>
+              <div class="form-group">
+                <label for="email">Email</label>
+                <input 
+                  id="email" 
+                  v-model="formAfiliado.email" 
+                  class="form-control" 
+                  type="email"
+                  placeholder="Email (opcional)"
+                >
+              </div>
+              <div class="form-group">
+                <label for="estado">Estado</label>
+                <select 
+                  id="estado" 
+                  v-model="formAfiliado.estado" 
+                  class="form-control"
+                >
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+                <small class="form-text text-muted">El estado se actualizará automáticamente según la actividad reciente.</small>
+              </div>
+              <div class="form-actions">
+                <button 
+                  type="button" 
+                  class="btn btn-secundario" 
+                  @click="cerrarFormulario"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  class="btn btn-primario"
+                  :disabled="enviandoForm"
+                >
+                  {{ modoEdicion ? 'Actualizar' : 'Guardar' }}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -157,6 +287,7 @@
 import { mapState, mapGetters, mapActions } from 'vuex';
 import FileUploader from '@/components/common/FileUploader.vue';
 import Paginacion from '@/components/common/Paginacion.vue';
+import afiliadosService from '@/services/afiliadosService';
 
 export default {
   name: 'AfiliadosView',
@@ -171,7 +302,20 @@ export default {
         nombre: '',
         dni: '',
         estado: 'Todos'
-      }
+      },
+      mostrarFormulario: false,
+      modoEdicion: false,
+      formAfiliado: {
+        id: null,
+        numero: '',
+        nombre: '',
+        apellido_paterno: '',
+        apellido_materno: '',
+        dni: '',
+        email: '',
+        estado: 'Activo'
+      },
+      enviandoForm: false
     };
   },
   computed: {
@@ -214,7 +358,9 @@ export default {
       'limpiarFiltros',
       'cambiarPagina',
       'cambiarItemsPorPagina',
-      'subirArchivoAfiliados'
+      'subirArchivoAfiliados',
+      'actualizarEstadosPorActividad',
+      'eliminarTodo'
     ]),
     ...mapActions('ui', [
       'mostrarMensaje',
@@ -228,12 +374,107 @@ export default {
       this.aplicarFiltros(this.filtros);
     },
     
+    mostrarFormularioCreacion() {
+      this.modoEdicion = false;
+      this.formAfiliado = {
+        id: null,
+        numero: '',
+        nombre: '',
+        apellido_paterno: '',
+        apellido_materno: '',
+        dni: '',
+        email: '',
+        estado: 'Activo'
+      };
+      this.mostrarFormulario = true;
+    },
+    
     editarAfiliado(afiliado) {
-      // Función para editar afiliado
-      this.mostrarMensaje({
-        texto: `Funcionalidad de edición en desarrollo para ${afiliado.nombre}`,
-        tipo: 'info'
-      });
+      this.modoEdicion = true;
+      this.formAfiliado = { ...afiliado };
+      this.mostrarFormulario = true;
+    },
+    
+    cerrarFormulario() {
+      this.mostrarFormulario = false;
+    },
+    
+    async guardarAfiliado() {
+      if (!this.validarFormulario()) {
+        return;
+      }
+      
+      this.enviandoForm = true;
+      
+      try {
+        let response;
+        
+        if (this.modoEdicion) {
+          response = await afiliadosService.actualizarAfiliado(this.formAfiliado.id, this.formAfiliado);
+        } else {
+          response = await afiliadosService.crearAfiliado(this.formAfiliado);
+        }
+        
+        if (response.success) {
+          this.mostrarExito(response.message || 'Afiliado guardado correctamente');
+          this.cerrarFormulario();
+          this.cargarAfiliados();
+        } else {
+          this.mostrarError(response.error || 'Error al guardar afiliado');
+        }
+      } catch (error) {
+        this.mostrarError('Error de conexión al guardar afiliado');
+        console.error('Error guardando afiliado:', error);
+      } finally {
+        this.enviandoForm = false;
+      }
+    },
+    
+    validarFormulario() {
+      const camposRequeridos = ['numero', 'nombre', 'apellido_paterno', 'apellido_materno', 'dni'];
+      
+      for (const campo of camposRequeridos) {
+        if (!this.formAfiliado[campo]) {
+          this.mostrarError(`El campo ${campo.replace('_', ' ')} es obligatorio`);
+          return false;
+        }
+      }
+      
+      return true;
+    },
+    
+    async actualizarEstados() {
+      try {
+        this.mostrarMensaje({
+          texto: "Actualizando estados según participación en los últimos 3 meses...",
+          tipo: "info",
+          duracion: 0 // No auto-cerrar
+        });
+        
+        const resultado = await this.actualizarEstadosPorActividad();
+        
+        if (resultado.success) {
+          this.mostrarExito(resultado.message);
+        } else {
+          this.mostrarError(resultado.message || "Error al actualizar los estados");
+        }
+      } catch (error) {
+        this.mostrarError("Error al actualizar los estados de los afiliados");
+        console.error("Error actualizando estados:", error);
+      }
+    },
+    
+    async confirmarBorrarTodo() {
+      const confirmar = await this.pedirConfirmacion('¿Está seguro de eliminar todos los afiliados? Esta acción no se puede deshacer.');
+      if (confirmar) {
+        try {
+          await this.eliminarTodo();
+          this.mostrarExito('Todos los afiliados han sido eliminados correctamente.');
+        } catch (error) {
+          this.mostrarError('Error al eliminar los afiliados');
+          console.error('Error en confirmarBorrarTodo:', error);
+        }
+      }
     },
     
     async exportarDatos() {
@@ -275,6 +516,19 @@ export default {
   border-radius: var(--border-radius-md);
   margin-bottom: var(--spacing-lg);
   box-shadow: var(--box-shadow);
+}
+
+.info-estados {
+  background-color: #f8f9fa;
+  border-left: 4px solid var(--color-info);
+  padding: var(--spacing-md) var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+  border-radius: var(--border-radius-sm);
+}
+
+.info-estados p {
+  margin: var(--spacing-xs) 0;
+  color: var(--color-texto);
 }
 
 .resumen-panel {
@@ -419,6 +673,93 @@ table tr:hover {
 
 .btn-editar:hover {
   opacity: 0.9;
+}
+
+/* Estilos para el modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.modal-container {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--color-primario);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #666;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.form-control {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--border-radius-sm);
+  transition: border-color var(--transition-fast);
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: var(--color-primario);
+  box-shadow: 0 0 0 2px rgba(0, 120, 215, 0.1);
+}
+
+.form-text {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 2rem;
 }
 
 @media (max-width: 768px) {

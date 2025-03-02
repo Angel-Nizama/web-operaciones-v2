@@ -205,7 +205,100 @@ export default {
       } finally {
         commit('SET_CARGANDO', false);
       }
+    },
+    
+    /**
+     * Eliminar todos los afiliados
+     */
+    async eliminarTodos({ dispatch, commit }) {
+      try {
+        commit('SET_CARGANDO', true);
+        const response = await afiliadosService.eliminarTodos();
+        
+        if (response.success) {
+          await dispatch('cargarAfiliados');
+          return { success: true, message: response.message || 'Afiliados eliminados correctamente' };
+        } else {
+          commit('SET_ERROR', 'Error al eliminar los afiliados');
+          return { success: false, message: response.message || 'Error al eliminar los afiliados' };
+        }
+      } catch (error) {
+        commit('SET_ERROR', error.message || 'Error de conexión');
+        console.error('Error en eliminarTodos:', error);
+        return { success: false, message: error.message || 'Error de conexión' };
+      } finally {
+        commit('SET_CARGANDO', false);
+      }
+    },
+    
+    /**
+     * Crear un nuevo afiliado
+     */
+    async crearAfiliado({ dispatch, commit }, data) {
+      try {
+        commit('SET_CARGANDO', true);
+        const response = await afiliadosService.crearAfiliado(data);
+        
+        if (response.success) {
+          await dispatch('cargarAfiliados');
+          return { success: true, message: response.message || 'Afiliado creado correctamente' };
+        } else {
+          commit('SET_ERROR', 'Error al crear el afiliado');
+          return { success: false, message: response.message || 'Error al crear el afiliado' };
+        }
+      } catch (error) {
+        commit('SET_ERROR', error.message || 'Error de conexión');
+        console.error('Error en crearAfiliado:', error);
+        return { success: false, message: error.message || 'Error de conexión' };
+      } finally {
+        commit('SET_CARGANDO', false);
+      }
+    },
+    
+    /**
+     * Actualizar un afiliado existente
+     */
+    async actualizarAfiliado({ dispatch, commit }, { id, data }) {
+      try {
+        commit('SET_CARGANDO', true);
+        const response = await afiliadosService.actualizarAfiliado(id, data);
+        
+        if (response.success) {
+          await dispatch('cargarAfiliados');
+          return { success: true, message: response.message || 'Afiliado actualizado correctamente' };
+        } else {
+          commit('SET_ERROR', 'Error al actualizar el afiliado');
+          return { success: false, message: response.message || 'Error al actualizar el afiliado' };
+        }
+      } catch (error) {
+        commit('SET_ERROR', error.message || 'Error de conexión');
+        console.error('Error en actualizarAfiliado:', error);
+        return { success: false, message: error.message || 'Error de conexión' };
+      } finally {
+        commit('SET_CARGANDO', false);
+      }
     }
+  },
+
+    async actualizarEstadosPorActividad({ dispatch, commit }) {
+      try {
+        commit('SET_CARGANDO', true);
+        const response = await afiliadosService.actualizarEstados();
+        
+        if (response.success) {
+          await dispatch('cargarAfiliados');
+          return { success: true, message: response.message };
+        } else {
+          commit('SET_ERROR', 'Error al actualizar estados');
+          return { success: false, message: 'Error al actualizar estados' };
+        }
+      } catch (error) {
+        commit('SET_ERROR', error.message || 'Error de conexión');
+        console.error('Error en actualizarEstadosPorActividad:', error);
+        return { success: false, message: error.message || 'Error de conexión' };
+      } finally {
+        commit('SET_CARGANDO', false);
+      }
   },
   
   getters: {
