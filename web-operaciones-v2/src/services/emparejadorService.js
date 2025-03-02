@@ -48,21 +48,77 @@ export default {
   },
   
   /**
-   * Calcula emparejamientos según filtros
+   * Calcula emparejamientos según filtros mejorados
    * @param {Object} filtros - Filtros para el cálculo
    * @returns {Promise} - Promesa con los resultados
    */
   async calcularEmparejamientos(filtros = {}) {
-    return api.post('/emparejador/calcular', filtros);
+    // Versión mejorada que acepta configuración de ponderaciones
+    const parametros = {
+      dias_minimos: filtros.dias_minimos || 1,
+      riesgo_maximo: filtros.riesgo_maximo || 50,
+      
+      // Nuevos parámetros
+      monto_minimo: filtros.monto_minimo || 0,
+      monto_maximo: filtros.monto_maximo || 0,
+      
+      // Parámetros de ponderación para el algoritmo avanzado
+      ponderaciones: filtros.ponderaciones || {
+        dias: 0.4,
+        diversidad: 0.25,
+        operaciones: 0.25,
+        patron: 0.1
+      },
+      
+      // Indicar si queremos usar el algoritmo mejorado
+      usar_algoritmo_avanzado: true
+    };
+    
+    return api.post('/emparejador/calcular', parametros);
   },
   
   /**
-   * Obtiene detalles de un emparejamiento específico
+   * Obtiene detalles de un emparejamiento específico con opciones avanzadas
    * @param {String} afiliado1 - Número del primer afiliado
    * @param {String} afiliado2 - Número del segundo afiliado
+   * @param {Object} opciones - Opciones adicionales
    * @returns {Promise} - Promesa con los detalles
    */
-  async obtenerDetallesEmparejamiento(afiliado1, afiliado2) {
-    return api.get(`/emparejador/detalles/${afiliado1}/${afiliado2}`);
+  async obtenerDetallesEmparejamiento(afiliado1, afiliado2, opciones = {}) {
+    // Construir parámetros de consulta
+    const params = new URLSearchParams();
+    
+    // Añadir opciones avanzadas si están presentes
+    if (opciones.incluirHistorialCompleto) {
+      params.append('incluir_historial_completo', 'true');
+    }
+    
+    if (opciones.configuracion) {
+      params.append('configuracion', JSON.stringify(opciones.configuracion));
+    }
+    
+    // Construir URL con parámetros
+    const queryString = params.toString() ? `?${params.toString()}` : '';
+    
+    return api.get(`/emparejador/detalles/${afiliado1}/${afiliado2}${queryString}`);
+  },
+  
+  /**
+   * Analiza patrones de comportamiento entre afiliados
+   * @param {Object} params - Parámetros para el análisis
+   * @returns {Promise} - Promesa con los resultados del análisis
+   */
+  async analizarPatrones(params = {}) {
+    return api.post('/emparejador/analizar-patrones', params);
+  },
+  
+  /**
+   * Exporta resultados del emparejador
+   * @param {Array} resultados - Resultados a exportar
+   * @param {String} formato - Formato de exportación ('csv' o 'excel')
+   * @returns {Promise} - Promesa con la URL del archivo generado
+   */
+  async exportarResultados(resultados, formato = 'csv') {
+    return api.post('/emparejador/exportar', { resultados, formato });
   }
 };

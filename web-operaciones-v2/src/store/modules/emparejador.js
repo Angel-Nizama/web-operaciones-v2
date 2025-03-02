@@ -11,15 +11,24 @@ export default {
       '700-1000': []
     },
     
-    // Configuración
+    // Configuración mejorada
     configuracion: {
       diasMinimos: 1,
-      riesgoMaximo: 50
+      riesgoMaximo: 50,
+      montoMinimo: 0,
+      montoMaximo: 0,
+      ponderacionDias: 0.4,
+      ponderacionDiversidad: 0.25,
+      ponderacionOperaciones: 0.25,
+      ponderacionPatron: 0.1
     },
     
     // Resultados de emparejamiento
     resultadosEmparejamiento: [],
     resultadosFiltrados: [],
+    
+    // Historial completo para análisis
+    historialOperaciones: [],
     
     // Detalles de pareja
     detallesPareja: null,
@@ -58,6 +67,11 @@ export default {
     // Actualizar resultados filtrados
     SET_RESULTADOS_FILTRADOS(state, resultados) {
       state.resultadosFiltrados = resultados;
+    },
+    
+    // Actualizar historial de operaciones
+    SET_HISTORIAL_OPERACIONES(state, historial) {
+      state.historialOperaciones = historial;
     },
     
     // Actualizar detalles de pareja
@@ -255,7 +269,7 @@ export default {
     },
     
     /**
-     * Calcular emparejamientos
+     * Calcular emparejamientos (versión mejorada)
      */
     async calcularEmparejamientos({ commit, state }) {
       try {
@@ -264,13 +278,27 @@ export default {
         
         const filtros = {
           dias_minimos: state.configuracion.diasMinimos,
-          riesgo_maximo: state.configuracion.riesgoMaximo
+          riesgo_maximo: state.configuracion.riesgoMaximo,
+          monto_minimo: state.configuracion.montoMinimo,
+          monto_maximo: state.configuracion.montoMaximo,
+          ponderaciones: {
+            dias: state.configuracion.ponderacionDias,
+            diversidad: state.configuracion.ponderacionDiversidad,
+            operaciones: state.configuracion.ponderacionOperaciones,
+            patron: state.configuracion.ponderacionPatron
+          }
         };
         
         const response = await emparejadorService.calcularEmparejamientos(filtros);
         
         if (response.success) {
           commit('SET_RESULTADOS_EMPAREJAMIENTO', response.data);
+          
+          // Almacenar historial para análisis posterior
+          if (response.historial) {
+            commit('SET_HISTORIAL_OPERACIONES', response.historial);
+          }
+          
           return { success: true };
         } else {
           commit('SET_ERROR', 'Error al calcular emparejamientos');
@@ -286,22 +314,46 @@ export default {
     },
     
     /**
-     * Filtrar resultados de emparejamientos
+     * Filtrar resultados de emparejamientos (versión mejorada)
      */
-    filtrarResultados({ commit, state }) {
+    filtrarResultados({ commit, state }, opciones = {}) {
       const { resultadosEmparejamiento, filtroAfiliado1, filtroAfiliado2 } = state;
+      const { riesgoMaximo = 100, montoMinimo = 0, montoMaximo = 0 } = opciones;
       
-      // Si no hay filtros, mostrar todos
-      if (!filtroAfiliado1 && !filtroAfiliado2) {
-        commit('SET_RESULTADOS_FILTRADOS', resultadosEmparejamiento);
+      // Si no hay resultados originales, no hay nada que filtrar
+      if (!resultadosEmparejamiento.length) {
+        commit('SET_RESULTADOS_FILTRADOS', []);
         return;
       }
       
       const resultadosFiltrados = resultadosEmparejamiento.filter(resultado => {
+        // Filtrar por nombres
+        const pasaFiltroNombres = filtrarPorNombres(resultado, filtroAfiliado1, filtroAfiliado2);
+        
+        // Filtrar por riesgo
+        const pasaFiltroRiesgo = !riesgoMaximo || resultado.riesgo <= riesgoMaximo;
+        
+        // Filtrar por monto
+        const pasaFiltroMonto = 
+          (!montoMinimo || resultado.monto_asignado >= montoMinimo) &&
+          (!montoMaximo || resultado.monto_asignado <= montoMaximo);
+        
+        return pasaFiltroNombres && pasaFiltroRiesgo && pasaFiltroMonto;
+      });
+      
+      commit('SET_RESULTADOS_FILTRADOS', resultadosFiltrados);
+      
+      // Función auxiliar para filtrar por nombres
+      function filtrarPorNombres(resultado, filtro1, filtro2) {
+        // Si no hay filtros, mostrar todos
+        if (!filtro1 && !filtro2) {
+          return true;
+        }
+        
         const afiliado1Lower = resultado.afiliado1.toLowerCase();
         const afiliado2Lower = resultado.afiliado2.toLowerCase();
-        const filtro1Lower = filtroAfiliado1.toLowerCase();
-        const filtro2Lower = filtroAfiliado2.toLowerCase();
+        const filtro1Lower = filtro1 ? filtro1.toLowerCase() : '';
+        const filtro2Lower = filtro2 ? filtro2.toLowerCase() : '';
         
         // Si solo hay filtro1
         if (filtro1Lower && !filtro2Lower) {
@@ -318,20 +370,71 @@ export default {
           (afiliado1Lower.includes(filtro1Lower) && afiliado2Lower.includes(filtro2Lower)) ||
           (afiliado1Lower.includes(filtro2Lower) && afiliado2Lower.includes(filtro1Lower))
         );
-      });
-      
-      commit('SET_RESULTADOS_FILTRADOS', resultadosFiltrados);
+      }
     },
     
     /**
-     * Obtener detalles de emparejamiento
+     * Ordenar resultados por un campo específico
+     * @param {Object} options - Opciones de ordenamiento
+     * @param {string} options.campo - Campo por el que ordenar
+     * @param {string} options.direccion - Dirección ('asc' o 'desc')
      */
-    async obtenerDetallesPareja({ commit }, { afiliado1, afiliado2 }) {
+    ordenarResultados({ commit, state }, { campo, direccion }) {
+      const resultados = [...state.resultadosFiltrados];
+      
+      // Función comparadora genérica
+      const comparar = (a, b, campo, dir) => {
+        let valorA = a[campo];
+        let valorB = b[campo];
+        
+        // Manejar caso especial para 'dias_desde_ultima'
+        if (campo === 'dias_desde_ultima') {
+          // Convertir a número si es posible
+          valorA = typeof valorA === 'string' && valorA !== 'Sin operaciones previas' 
+            ? parseInt(valorA) 
+            : valorA === 'Sin operaciones previas' ? 9999 : valorA;
+          valorB = typeof valorB === 'string' && valorB !== 'Sin operaciones previas' 
+            ? parseInt(valorB) 
+            : valorB === 'Sin operaciones previas' ? 9999 : valorB;
+        }
+        
+        // Si son cadenas, comparar ignorando mayúsculas/minúsculas
+        if (typeof valorA === 'string' && typeof valorB === 'string') {
+          return dir === 'asc' 
+            ? valorA.localeCompare(valorB) 
+            : valorB.localeCompare(valorA);
+        }
+        
+        // Para valores numéricos
+        return dir === 'asc' ? valorA - valorB : valorB - valorA;
+      };
+      
+      // Ordenar resultados
+      resultados.sort((a, b) => comparar(a, b, campo, direccion));
+      
+      // Actualizar resultados filtrados
+      commit('SET_RESULTADOS_FILTRADOS', resultados);
+    },
+    
+    /**
+     * Obtener detalles de emparejamiento (versión mejorada)
+     */
+    async obtenerDetallesPareja({ commit, state }, { afiliado1, afiliado2 }) {
       try {
         commit('SET_CARGANDO_DETALLES', true);
         commit('SET_ERROR', null);
         
-        const response = await emparejadorService.obtenerDetallesEmparejamiento(afiliado1, afiliado2);
+        // Añadir análisis de historial completo
+        const opciones = {
+          incluirHistorialCompleto: true,
+          configuracion: state.configuracion
+        };
+        
+        const response = await emparejadorService.obtenerDetallesEmparejamiento(
+          afiliado1, 
+          afiliado2,
+          opciones
+        );
         
         if (response.success) {
           commit('SET_DETALLES_PAREJA', response);

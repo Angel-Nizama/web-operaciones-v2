@@ -1,4 +1,5 @@
 from flask import jsonify, request, current_app
+import json
 from werkzeug.utils import secure_filename
 from app.api import bp
 from app.services.operaciones_service import OperacionesService
@@ -157,19 +158,6 @@ def eliminar_todos_afiliados():
     """Elimina todos los afiliados de todos los rangos"""
     return jsonify(emparejamiento_service.eliminar_todos_afiliados())
 
-@bp.route('/emparejador/calcular', methods=['POST'])
-@handle_errors
-def calcular_emparejamientos():
-    """Calcula emparejamientos óptimos entre afiliados"""
-    filtros = request.json or {}
-    return jsonify(emparejamiento_service.calcular_emparejamientos(filtros))
-
-@bp.route('/emparejador/detalles/<afiliado1>/<afiliado2>', methods=['GET'])
-@handle_errors
-def obtener_detalles_emparejamiento(afiliado1, afiliado2):
-    """Obtiene detalles de un emparejamiento específico"""
-    return jsonify(emparejamiento_service.obtener_detalles_emparejamiento(afiliado1, afiliado2))
-
 @bp.route('/delete_all_afiliados', methods=['DELETE'])
 @handle_errors
 def delete_all_afiliados():
@@ -295,3 +283,101 @@ def actualizar_estados_afiliados():
     except Exception as e:
         current_app.logger.error(f"Error en actualizar_estados_afiliados: {str(e)}")
         return jsonify({"success": False, "error": "Error al actualizar estados"}), 500
+    
+# Nuevas rutas para el emparejador mejorado 
+@bp.route('/emparejador/calcular', methods=['POST'])
+@handle_errors
+def calcular_emparejamientos():
+    """
+    Calcula emparejamientos óptimos entre afiliados
+    
+    Versión mejorada que acepta configuraciones de ponderación 
+    y filtros adicionales en el request
+    """
+    filtros = request.json or {}
+    
+    # Verificar si se está solicitando el algoritmo avanzado
+    usar_algoritmo_avanzado = filtros.get('usar_algoritmo_avanzado', False)
+    
+    # Extender el log para diagnóstico
+    if usar_algoritmo_avanzado:
+        current_app.logger.info(f"Calculando emparejamientos con algoritmo avanzado: {filtros}")
+    else:
+        current_app.logger.info(f"Calculando emparejamientos con algoritmo estándar: {filtros}")
+    
+    return jsonify(emparejamiento_service.calcular_emparejamientos(filtros))
+
+@bp.route('/emparejador/detalles/<afiliado1>/<afiliado2>', methods=['GET'])
+@handle_errors
+def obtener_detalles_emparejamiento(afiliado1, afiliado2):
+    """
+    Obtiene detalles de un emparejamiento específico
+    
+    Versión mejorada que acepta parámetros adicionales vía query string:
+    - incluir_historial_completo: Si es 'true', incluye todo el historial para análisis
+    - configuracion: JSON con la configuración para cálculos avanzados
+    """
+    # Opciones extendidas (opcionales)
+    opciones = {}
+    
+    # Verificar si se solicita incluir historial completo
+    if request.args.get('incluir_historial_completo') == 'true':
+        opciones['incluir_historial_completo'] = True
+    
+    # Verificar si se proporciona configuración personalizada
+    config_str = request.args.get('configuracion')
+    if config_str:
+        try:
+            opciones['configuracion'] = json.loads(config_str)
+        except json.JSONDecodeError:
+            # Si hay error en el JSON, ignorar la configuración
+            current_app.logger.warning(f"Error decodificando JSON de configuración: {config_str}")
+    
+    current_app.logger.info(f"Obteniendo detalles emparejamiento {afiliado1}-{afiliado2} con opciones: {opciones}")
+    
+    return jsonify(emparejamiento_service.obtener_detalles_emparejamiento(afiliado1, afiliado2, opciones))
+
+@bp.route('/emparejador/analizar-patrones', methods=['POST'])
+@handle_errors
+def analizar_patrones():
+    """
+    Analiza patrones de comportamiento entre afiliados
+    """
+    params = request.json or {}
+    
+    # Esta función podría implementarse en el servicio para análisis más avanzados
+    # Por ahora, simulamos una respuesta
+    
+    return jsonify({
+        "success": True,
+        "mensaje": "Análisis de patrones en desarrollo",
+        "fecha_implementacion_estimada": "2023-12-31"
+    })
+
+@bp.route('/emparejador/exportar', methods=['POST'])
+@handle_errors
+def exportar_resultados_emparejador():
+    """
+    Exporta resultados del emparejador a CSV/Excel
+    
+    Este endpoint recibiría la lista de resultados y los convertiría
+    a un formato de archivo para descarga.
+    
+    Nota: Implementación mínima para compatibilidad con frontend.
+    La implementación real requeriría generar los archivos.
+    """
+    resultados = request.json.get('resultados', [])
+    formato = request.json.get('formato', 'csv').lower()
+    
+    # Validar formato
+    if formato not in ['csv', 'excel']:
+        raise ValidationError("Formato de exportación no válido. Use 'csv' o 'excel'")
+    
+    # En una implementación real, generaríamos el archivo y devolveríamos una URL
+    # Para esta implementación básica, solo confirmamos la recepción
+    
+    return jsonify({
+        "success": True,
+        "mensaje": f"Se recibieron {len(resultados)} resultados para exportar en formato {formato}",
+        "url_descarga": None  # En implementación real, aquí iría la URL
+    })

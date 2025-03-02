@@ -3,6 +3,7 @@ from datetime import datetime
 import random
 import numpy as np
 import pandas as pd
+import json
 from flask import current_app
 from sqlalchemy import text
 from app import db
@@ -170,8 +171,20 @@ class EmparejamientoService(BaseService):
     def calcular_emparejamientos(self, filtros):
         """Calcula emparejamientos óptimos entre afiliados"""
         try:
+            # Extraer valores de filtros con valores por defecto
             dias_minimos = filtros.get('dias_minimos', 1)
             riesgo_maximo = filtros.get('riesgo_maximo', 50)
+            monto_minimo = filtros.get('monto_minimo', 0)
+            monto_maximo = filtros.get('monto_maximo', 0)
+            usar_algoritmo_avanzado = filtros.get('usar_algoritmo_avanzado', False)
+            
+            # Obtener ponderaciones
+            ponderaciones = filtros.get('ponderaciones', {
+                'dias': 0.4,
+                'diversidad': 0.25,
+                'operaciones': 0.25,
+                'patron': 0.1
+            })
             
             # Obtener todos los afiliados con sus rangos
             rangos_query = db.session.query(
@@ -222,12 +235,35 @@ class EmparejamientoService(BaseService):
                 return {"success": True, "data": []}
             
             # Calcular emparejamientos
-            resultados = self._evaluar_emparejamientos(
-                rango_afiliados,
-                operaciones,
-                dias_minimos,
-                riesgo_maximo
-            )
+            if usar_algoritmo_avanzado:
+                resultados = self._evaluar_emparejamientos_avanzado(
+                    rango_afiliados,
+                    operaciones,
+                    dias_minimos,
+                    riesgo_maximo,
+                    monto_minimo,
+                    monto_maximo,
+                    ponderaciones
+                )
+            else:
+                resultados = self._evaluar_emparejamientos(
+                    rango_afiliados,
+                    operaciones,
+                    dias_minimos,
+                    riesgo_maximo
+                )
+            
+            # Aplicar filtros de monto
+            if monto_minimo > 0 or monto_maximo > 0:
+                resultados_filtrados = []
+                for res in resultados:
+                    monto = res.get('monto_asignado', 0)
+                    if monto_minimo > 0 and monto < monto_minimo:
+                        continue
+                    if monto_maximo > 0 and monto > monto_maximo:
+                        continue
+                    resultados_filtrados.append(res)
+                resultados = resultados_filtrados
             
             return {
                 "success": True,
@@ -371,6 +407,168 @@ class EmparejamientoService(BaseService):
             raise ProcessingError(f"Error calculando emparejamientos: {str(e)}")
 
         return resultados
+
+    def _evaluar_emparejamientos_avanzado(self, rango_afiliados, operaciones, dias_minimos, riesgo_maximo, 
+                                         monto_minimo, monto_maximo, ponderaciones):
+        """
+        Versión avanzada del evaluador de emparejamientos con ponderaciones personalizadas
+        y análisis de patrones de comportamiento.
+        """
+        resultados = []
+        total_parejas = 0
+        parejas_filtradas = 0
+
+        try:
+            # Convertir fechas y horas a datetime para cálculos
+            operaciones['fecha'] = pd.to_datetime(operaciones['fecha'])
+            if not operaciones.empty and 'hora' in operaciones.columns:
+                operaciones['hora'] = operaciones['hora'].apply(
+                    lambda x: str(x) + ':00' if len(str(x).split(':')) == 2 else str(x)
+                )
+                operaciones['fecha_completa'] = pd.to_datetime(
+                    operaciones['fecha'].dt.strftime('%Y-%m-%d') + ' ' + operaciones['hora']
+                )
+            fecha_actual = datetime.now().date()
+
+            # Consolidar los rangos por afiliado
+            rangos_consolidados = {}
+            for _, row in rango_afiliados.iterrows():
+                afiliado = row['numero_afiliado']
+                if afiliado not in rangos_consolidados:
+                    rangos_consolidados[afiliado] = {
+                        'nombre_completo': row['nombre_completo'],
+                        'rangos': [],
+                        'recibe_en': set(),
+                        'envia_a': set()
+                    }
+                
+                rangos_consolidados[afiliado]['rangos'].append({
+                    'inicio': row['rango_inicio'],
+                    'fin': row['rango_fin']
+                })
+                rangos_consolidados[afiliado]['recibe_en'].add(row['recibe_en'])
+                rangos_consolidados[afiliado]['envia_a'].add(row['envia_a'])
+
+            # Iterar sobre todas las posibles combinaciones de afiliados
+            afiliados_list = list(rangos_consolidados.items())
+            for i, (num_afiliado1, info1) in enumerate(afiliados_list):
+                for num_afiliado2, info2 in afiliados_list[i+1:]:
+                    total_parejas += 1
+                    
+                    # Evitar auto-emparejamientos
+                    if num_afiliado1 == num_afiliado2:
+                        parejas_filtradas += 1
+                        continue
+
+                    # Calcular el rango efectivo
+                    rango_efectivo = self._calcular_rango_efectivo(info1['rangos'], info2['rangos'])
+                    if not rango_efectivo:
+                        parejas_filtradas += 1
+                        continue
+
+                    # Ajustar el rango máximo para Izipay (límite de 800)
+                    if 'Izipay' in info1['recibe_en'] or 'Izipay' in info2['recibe_en']:
+                        rango_efectivo['fin'] = min(rango_efectivo['fin'], 800)
+                    
+                    # Aplicar filtros de monto al rango efectivo
+                    if monto_minimo > 0:
+                        rango_efectivo['inicio'] = max(rango_efectivo['inicio'], monto_minimo)
+                    if monto_maximo > 0:
+                        rango_efectivo['fin'] = min(rango_efectivo['fin'], monto_maximo)
+
+                    if rango_efectivo['fin'] <= rango_efectivo['inicio']:
+                        parejas_filtradas += 1
+                        continue
+
+                    # Obtener el historial de operaciones entre la pareja
+                    if not operaciones.empty:
+                        operaciones_pareja = operaciones[
+                            ((operaciones['nombre1'] == num_afiliado1) & (operaciones['nombre2'] == num_afiliado2)) |
+                            ((operaciones['nombre1'] == num_afiliado2) & (operaciones['nombre2'] == num_afiliado1))
+                        ]
+                    else:
+                        operaciones_pareja = pd.DataFrame()
+
+                    # Verificar el tiempo transcurrido desde la última operación
+                    if not operaciones_pareja.empty:
+                        ultima_operacion = operaciones_pareja['fecha'].max()
+                        dias_desde_ultima = (fecha_actual - ultima_operacion.date()).days
+                        if dias_desde_ultima < dias_minimos:
+                            parejas_filtradas += 1
+                            continue
+                    else:
+                        dias_desde_ultima = float('inf')  # Sin operaciones previas
+
+                    # Calcular métricas
+                    diversidad_1 = self._calcular_diversidad(operaciones, num_afiliado1)
+                    diversidad_2 = self._calcular_diversidad(operaciones, num_afiliado2)
+                    diversidad_minima = min(diversidad_1, diversidad_2)
+                    afiliado_menor_diversidad = num_afiliado1 if diversidad_1 < diversidad_2 else num_afiliado2
+                    
+                    operaciones_minimas, afiliado_menor_ops = self._calcular_total_operaciones(
+                        operaciones, 
+                        num_afiliado1, 
+                        num_afiliado2
+                    )
+                    
+                    # Análisis de patrones de comportamiento
+                    patron_riesgo = self._evaluar_patron_operaciones({
+                        'historial_operaciones': operaciones_pareja.to_dict('records') if not operaciones_pareja.empty else [],
+                        'afiliado1': num_afiliado1,
+                        'afiliado2': num_afiliado2
+                    })
+
+                    # Calcular riesgo con algoritmo avanzado
+                    riesgo = self._calcular_riesgo_mejorado(
+                        {
+                            'dias_desde_ultima': dias_desde_ultima if dias_desde_ultima != float('inf') else 1000,
+                            'diversidad_minima': diversidad_minima,
+                            'operaciones_intermedias': operaciones_minimas,
+                            'patron_riesgo': patron_riesgo,
+                            'historial_operaciones': operaciones_pareja.to_dict('records') if not operaciones_pareja.empty else []
+                        },
+                        {
+                            'ponderacion_dias': ponderaciones.get('dias', 0.4),
+                            'ponderacion_diversidad': ponderaciones.get('diversidad', 0.25),
+                            'ponderacion_operaciones': ponderaciones.get('operaciones', 0.25),
+                            'ponderacion_patron': ponderaciones.get('patron', 0.1)
+                        }
+                    )
+
+                    if riesgo > riesgo_maximo:
+                        parejas_filtradas += 1
+                        continue
+
+                    # Calcular monto sugerido mejorado
+                    monto_sugerido = self._calcular_monto_sugerido_mejorado(
+                        operaciones_pareja, 
+                        rango_efectivo['inicio'], 
+                        rango_efectivo['fin'],
+                        patron_riesgo
+                    )
+
+                    # Agregar emparejamiento a resultados
+                    resultados.append({
+                        "afiliado1": info1['nombre_completo'],
+                        "afiliado2": info2['nombre_completo'],
+                        "dias_desde_ultima": dias_desde_ultima if dias_desde_ultima != float('inf') else "Sin operaciones previas",
+                        "diversidad_minima": f"{diversidad_minima} ({rangos_consolidados[afiliado_menor_diversidad]['nombre_completo']})",
+                        "operaciones_intermedias_minimas": f"{operaciones_minimas} ({rangos_consolidados[afiliado_menor_ops]['nombre_completo']})",
+                        "monto_asignado": monto_sugerido,
+                        "riesgo": round(riesgo, 2),
+                        "pareja": [num_afiliado1, num_afiliado2]
+                    })
+
+            # Ordenar por nivel de riesgo
+            resultados.sort(key=lambda x: x['riesgo'])
+
+        except Exception as e:
+            current_app.logger.error(f"Error evaluando emparejamientos avanzados: {str(e)}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
+            raise ProcessingError(f"Error calculando emparejamientos avanzados: {str(e)}")
+
+        return resultados
     
     def _calcular_diversidad(self, operaciones, afiliado):
         """Calcula la diversidad de contrapartes para un afiliado"""
@@ -447,6 +645,146 @@ class EmparejamientoService(BaseService):
             (riesgo_diversidad * 0.3) +
             (riesgo_operaciones * 0.3)
         )
+        
+    def _calcular_riesgo_mejorado(self, datos_pareja, config):
+        """
+        Calcula nivel de riesgo avanzado (0-100) considerando múltiples factores
+        
+        Args:
+            datos_pareja: Dict con datos de la pareja (dias, diversidad, operaciones, etc)
+            config: Dict con configuración y ponderaciones
+            
+        Returns:
+            float: Nivel de riesgo (0-100)
+        """
+        # Extraer datos
+        dias = datos_pareja.get('dias_desde_ultima', 1000) if datos_pareja.get('dias_desde_ultima') != "Sin operaciones previas" else 1000
+        if isinstance(dias, str) and dias.isdigit():
+            dias = int(dias)
+        diversidad_min = datos_pareja.get('diversidad_minima', 0)
+        ops_intermedias = datos_pareja.get('operaciones_intermedias', 0)
+        patron_riesgo = datos_pareja.get('patron_riesgo', 50)
+        
+        # Obtener ponderaciones de la configuración
+        pond_dias = config.get('ponderacion_dias', 0.4)
+        pond_diversidad = config.get('ponderacion_diversidad', 0.25)
+        pond_operaciones = config.get('ponderacion_operaciones', 0.25)
+        pond_patron = config.get('ponderacion_patron', 0.1)
+        
+        # Calcular componentes de riesgo individual
+        # 1. Riesgo por días desde última operación (relación inversa)
+        # Formula mejorada: Decaimiento exponencial
+        dias_factor = min(1.0, 1.0 / (1.0 + 0.1 * dias))
+        riesgo_dias = dias_factor * 100
+        
+        # 2. Riesgo por diversidad de contrapartes (relación inversa)
+        div_factor = 1.0 / (1.0 + 0.2 * diversidad_min)
+        riesgo_diversidad = div_factor * 100
+        
+        # 3. Riesgo por operaciones intermedias (relación inversa)
+        ops_factor = 1.0 / (1.0 + 0.15 * ops_intermedias)
+        riesgo_operaciones = ops_factor * 100
+        
+        # 4. Usar el riesgo de patrón calculado externamente
+        riesgo_patron = patron_riesgo
+        
+        # Cálculo de riesgo final con ponderaciones dinámicas
+        riesgo_final = (
+            (riesgo_dias * pond_dias) +
+            (riesgo_diversidad * pond_diversidad) +
+            (riesgo_operaciones * pond_operaciones) +
+            (riesgo_patron * pond_patron)
+        )
+        
+        # Normalizar a escala 0-100
+        return min(100, max(0, riesgo_final))
+    
+    def _evaluar_patron_operaciones(self, datos_pareja):
+        """
+        Analiza patrones en las operaciones para detectar comportamientos inusuales
+        """
+        # Implementación inicial básica
+        historial = datos_pareja.get('historial_operaciones', [])
+        
+        if not historial or len(historial) < 2:
+            return 50  # Valor neutro para historial escaso
+        
+        # Analizar regularidad de montos (desviación estándar)
+        try:
+            montos = [op.get('monto', 0) for op in historial]
+            media = sum(montos) / len(montos)
+            varianza = sum((x - media) ** 2 for x in montos) / len(montos)
+            desviacion = varianza ** 0.5
+            
+            # Calcular coeficiente de variación (menor variación = más sospechoso)
+            if media > 0:
+                coef_var = desviacion / media
+                # Invertir para obtener riesgo (menor variación = mayor riesgo)
+                riesgo_variacion = 100 * (1 - min(1, coef_var))
+            else:
+                riesgo_variacion = 50
+                
+            # Analizar regularidad temporal
+            riesgo_temporal = self._analizar_regularidad_temporal(historial)
+            
+            # Combinar indicadores
+            return (riesgo_variacion * 0.6) + (riesgo_temporal * 0.4)
+        except:
+            # En caso de error, devolver valor neutro
+            return 50
+
+    def _analizar_regularidad_temporal(self, historial):
+        """
+        Analiza la regularidad temporal de las operaciones
+        Operaciones muy regulares pueden indicar comportamiento sospechoso
+        """
+        try:
+            # Convertir fechas a objetos datetime
+            import datetime
+            fechas = []
+            for op in historial:
+                if 'fecha' in op:
+                    try:
+                        # Intentar diferentes formatos de fecha
+                        fecha_str = op['fecha']
+                        if isinstance(fecha_str, datetime.date):
+                            fechas.append(datetime.datetime.combine(fecha_str, datetime.datetime.min.time()))
+                        else:
+                            for fmt in ['%Y-%m-%d', '%d/%m/%Y']:
+                                try:
+                                    fecha = datetime.datetime.strptime(str(fecha_str), fmt)
+                                    fechas.append(fecha)
+                                    break
+                                except:
+                                    pass
+                    except:
+                        pass
+            
+            if len(fechas) < 2:
+                return 50
+            
+            # Ordenar fechas
+            fechas.sort()
+            
+            # Calcular diferencias entre fechas consecutivas (en días)
+            diferencias = [(fechas[i+1] - fechas[i]).days for i in range(len(fechas)-1)]
+            
+            # Calcular desviación estándar de las diferencias
+            if diferencias:
+                media_dif = sum(diferencias) / len(diferencias)
+                if media_dif > 0:
+                    varianza_dif = sum((x - media_dif) ** 2 for x in diferencias) / len(diferencias)
+                    desviacion_dif = varianza_dif ** 0.5
+                    
+                    # Calcular coeficiente de variación temporal
+                    coef_var_temp = desviacion_dif / media_dif
+                    
+                    # Menor variación temporal = mayor riesgo (más regular = más sospechoso)
+                    return 100 * (1 - min(1, coef_var_temp / 2))  # Dividir por 2 para ser menos estricto
+            
+            return 50  # Valor neutro por defecto
+        except:
+            return 50  # En caso de error
     
     def _calcular_monto_sugerido(self, operaciones_pareja, rango_inicio, rango_fin, montos_excluir=None):
         """Calcula monto sugerido para una operación"""
@@ -481,6 +819,104 @@ class EmparejamientoService(BaseService):
         weights = [i + 1 for i in range(len(montos_posibles))]
         return random.choices(montos_posibles, weights=weights, k=1)[0]
     
+    def _calcular_monto_sugerido_mejorado(self, operaciones_pareja, rango_inicio, rango_fin, factor_riesgo=50, montos_excluir=None):
+        """
+        Versión mejorada del cálculo de monto sugerido que tiene en cuenta el historial y el factor de riesgo
+        """
+        montos_excluir = montos_excluir or set()
+        if not isinstance(montos_excluir, set):
+            montos_excluir = set(montos_excluir)
+        
+        rango_size = rango_fin - rango_inicio
+        
+        # Si hay historial de operaciones, considerar los montos previos
+        if not operaciones_pareja.empty:
+            # Obtener montos previos
+            montos_previos = operaciones_pareja['monto'].tolist()
+            
+            # Calcular estadísticas de montos
+            if montos_previos:
+                monto_medio = sum(montos_previos) / len(montos_previos)
+                monto_desv = (sum((m - monto_medio) ** 2 for m in montos_previos) / len(montos_previos)) ** 0.5
+                
+                # Ajustar rango en función del historial y el riesgo
+                # Si el riesgo es bajo, priorizar montos similares a los previos
+                # Si el riesgo es alto, diversificar más el rango
+                if factor_riesgo < 30:  # Riesgo bajo
+                    # Centrar el rango alrededor del monto medio con un margen que depende de la desviación
+                    nuevo_inicio = max(rango_inicio, monto_medio - 2 * monto_desv)
+                    nuevo_fin = min(rango_fin, monto_medio + 2 * monto_desv)
+                    
+                    # Evitar que el rango sea demasiado pequeño
+                    if nuevo_fin - nuevo_inicio < rango_size * 0.2:
+                        margin = rango_size * 0.1
+                        nuevo_inicio = max(rango_inicio, monto_medio - margin)
+                        nuevo_fin = min(rango_fin, monto_medio + margin)
+                    
+                    rango_inicio, rango_fin = nuevo_inicio, nuevo_fin
+        
+        # Número de puntos a generar
+        num_puntos = min(50, int(rango_size))
+        montos_posibles = []
+        
+        # Ajustar la distribución según el factor de riesgo
+        # Con riesgo bajo (< 30), preferir valores cercanos a la media
+        # Con riesgo medio (30-70), distribución uniforme
+        # Con riesgo alto (> 70), preferir valores extremos
+        if factor_riesgo < 30:
+            # Distribución centrada (preferencia por valores medios del rango)
+            for i in range(num_puntos):
+                # Usar distribución beta centrada
+                factor = 0.5 + (i / num_puntos - 0.5) * 0.8  # Se concentra cerca de 0.5
+                monto = rango_inicio + (rango_fin - rango_inicio) * factor
+                monto_redondeado = round(monto)
+                if monto_redondeado not in montos_excluir:
+                    montos_posibles.append(monto_redondeado)
+        elif factor_riesgo > 70:
+            # Distribución bimodal (preferencia por extremos)
+            for i in range(num_puntos):
+                # Usar distribución que prefiere valores extremos
+                if i < num_puntos / 2:
+                    factor = (i / (num_puntos / 2)) * 0.3  # Cercanos al inicio
+                else:
+                    factor = 0.7 + ((i - num_puntos / 2) / (num_puntos / 2)) * 0.3  # Cercanos al fin
+                monto = rango_inicio + (rango_fin - rango_inicio) * factor
+                monto_redondeado = round(monto)
+                if monto_redondeado not in montos_excluir:
+                    montos_posibles.append(monto_redondeado)
+        else:
+            # Distribución uniforme con ligera preferencia por valores altos
+            for i in range(num_puntos):
+                factor = (i / num_puntos) ** 0.6  # Ligera preferencia por valores altos
+                monto = rango_inicio + (rango_fin - rango_inicio) * factor
+                monto_redondeado = round(monto)
+                if monto_redondeado not in montos_excluir:
+                    montos_posibles.append(monto_redondeado)
+
+        if not montos_posibles:
+            # Si no hay montos posibles, usar el método tradicional
+            return self._calcular_monto_sugerido(
+                operaciones_pareja, 
+                rango_inicio, 
+                rango_fin,
+                montos_excluir
+            )
+
+        # Elegir un monto con pesos apropiados según la distribución
+        if factor_riesgo < 30:
+            # Para riesgo bajo, dar más peso a los montos centrales
+            mid_idx = len(montos_posibles) // 2
+            weights = [max(1, mid_idx - abs(i - mid_idx)) for i in range(len(montos_posibles))]
+        elif factor_riesgo > 70:
+            # Para riesgo alto, dar más peso a los extremos
+            mid_idx = len(montos_posibles) // 2
+            weights = [max(1, abs(i - mid_idx)) for i in range(len(montos_posibles))]
+        else:
+            # Para riesgo medio, pesos equilibrados con preferencia por valores altos
+            weights = [i + 1 for i in range(len(montos_posibles))]
+        
+        return random.choices(montos_posibles, weights=weights, k=1)[0]
+    
     def _calcular_rango_efectivo(self, rangos1, rangos2):
         """Calcula el rango efectivo entre dos conjuntos de rangos"""
         superposiciones = []
@@ -502,9 +938,13 @@ class EmparejamientoService(BaseService):
         # Tomar el rango más amplio
         return max(superposiciones, key=lambda x: x['fin'] - x['inicio'])
     
-    def obtener_detalles_emparejamiento(self, afiliado1, afiliado2):
+    def obtener_detalles_emparejamiento(self, afiliado1, afiliado2, opciones=None):
         """Obtiene detalles de un emparejamiento específico"""
         try:
+            opciones = opciones or {}
+            incluir_historial_completo = opciones.get('incluir_historial_completo', False)
+            configuracion = opciones.get('configuracion', {})
+            
             # Consultar información de afiliados
             info_afiliados = db.session.query(
                 RangoAfiliado.numero_afiliado,
@@ -548,13 +988,24 @@ class EmparejamientoService(BaseService):
                 rango_fin = min(rango_fin, 800)
             
             # Obtener historial de operaciones
-            operaciones = Operacion.query.filter(
-                ((Operacion.nombre1 == afiliado1) & (Operacion.nombre2 == afiliado2)) |
-                ((Operacion.nombre1 == afiliado2) & (Operacion.nombre2 == afiliado1))
-            ).order_by(
-                Operacion.fecha.desc(), 
-                Operacion.hora
-            ).limit(10).all()
+            if incluir_historial_completo:
+                # Obtener todas las operaciones disponibles para análisis completo
+                operaciones = Operacion.query.filter(
+                    ((Operacion.nombre1 == afiliado1) & (Operacion.nombre2 == afiliado2)) |
+                    ((Operacion.nombre1 == afiliado2) & (Operacion.nombre2 == afiliado1))
+                ).order_by(
+                    Operacion.fecha.desc(), 
+                    Operacion.hora
+                ).all()
+            else:
+                # Limitar a las últimas 10 operaciones para visibilidad
+                operaciones = Operacion.query.filter(
+                    ((Operacion.nombre1 == afiliado1) & (Operacion.nombre2 == afiliado2)) |
+                    ((Operacion.nombre1 == afiliado2) & (Operacion.nombre2 == afiliado1))
+                ).order_by(
+                    Operacion.fecha.desc(), 
+                    Operacion.hora
+                ).limit(10).all()
             
             # Convertir a formato de respuesta
             historial = [{
@@ -562,6 +1013,15 @@ class EmparejamientoService(BaseService):
                 'hora': op.hora.strftime('%H:%M'),
                 'monto': op.monto
             } for op in operaciones]
+            
+            # Calcular patrón de riesgo si tenemos historial
+            patron_riesgo = 0
+            if historial:
+                patron_riesgo = self._evaluar_patron_operaciones({
+                    'historial_operaciones': historial,
+                    'afiliado1': afiliado1,
+                    'afiliado2': afiliado2
+                })
             
             # Generar montos sugeridos adicionales
             montos_recientes = set(op.monto for op in operaciones)
@@ -578,26 +1038,43 @@ class EmparejamientoService(BaseService):
                 'monto': op.monto
             } for op in operaciones])
             
-            while len(montos_sugeridos) < 5 and intentos < max_intentos:
-                monto = self._calcular_monto_sugerido(
-                    df_ops,
-                    rango_inicio,
-                    rango_fin,
-                    montos_excluir=set(montos_sugeridos + list(montos_recientes))
-                )
-                if monto is not None:
-                    montos_sugeridos.append(monto)
-                intentos += 1
+            # Usar cálculo mejorado si hay configuración
+            if configuracion:
+                while len(montos_sugeridos) < 5 and intentos < max_intentos:
+                    monto = self._calcular_monto_sugerido_mejorado(
+                        df_ops,
+                        rango_inicio,
+                        rango_fin,
+                        patron_riesgo,
+                        montos_excluir=set(montos_sugeridos + list(montos_recientes))
+                    )
+                    if monto is not None:
+                        montos_sugeridos.append(monto)
+                    intentos += 1
+            else:
+                while len(montos_sugeridos) < 5 and intentos < max_intentos:
+                    monto = self._calcular_monto_sugerido(
+                        df_ops,
+                        rango_inicio,
+                        rango_fin,
+                        montos_excluir=set(montos_sugeridos + list(montos_recientes))
+                    )
+                    if monto is not None:
+                        montos_sugeridos.append(monto)
+                    intentos += 1
             
             return {
                 "success": True,
                 "data": historial,
                 "montos_sugeridos": montos_sugeridos,
+                "patron_riesgo": patron_riesgo,
                 "usa_izipay": usa_izipay
             }
             
         except Exception as e:
             current_app.logger.error(f"Error en obtener_detalles_emparejamiento: {str(e)}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
             return {
                 "success": False,
                 "error": f"Error obteniendo detalles: {str(e)}"

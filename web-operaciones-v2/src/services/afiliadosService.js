@@ -1,5 +1,6 @@
 import api from './api';
 
+
 export default {
   /**
    * Obtiene el listado de afiliados con filtros
