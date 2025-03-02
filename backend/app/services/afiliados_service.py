@@ -222,3 +222,34 @@ class AfiliadosService(BaseService):
         except Exception as e:
             db.session.rollback()
             raise ProcessingError(f"Error eliminando afiliados: {str(e)}")
+
+    
+    def validar_afiliado(self, data, id=None):
+        """Valida los datos de un afiliado"""
+        errores = []
+        
+        # Validar campos requeridos
+        campos_requeridos = ['numero', 'nombre', 'apellido_paterno', 'apellido_materno', 'dni']
+        for campo in campos_requeridos:
+            if campo not in data or not data[campo]:
+                errores.append(f"El campo {campo} es requerido")
+        
+        if errores:
+            return errores
+        
+        # Verificar unicidad de número y DNI
+        filtro = (Afiliado.numero == data['numero']) | (Afiliado.dni == data['dni'])
+        
+        # Si es una actualización, excluir el afiliado actual
+        if id:
+            filtro = filtro & (Afiliado.id != id)
+            
+        afiliado_existente = Afiliado.query.filter(filtro).first()
+        
+        if afiliado_existente:
+            if afiliado_existente.numero == data['numero']:
+                errores.append(f"Ya existe un afiliado con el número {data['numero']}")
+            else:
+                errores.append(f"Ya existe un afiliado con el DNI {data['dni']}")
+        
+        return errores

@@ -6,6 +6,8 @@ from app.services import afiliados_service
 from app.services import emparejamiento_service
 from app.utils.exceptions import ValidationError, ProcessingError
 from functools import wraps
+from app.models.afiliado import Afiliado
+from app import db
 
 operaciones_service = OperacionesService()
 
@@ -173,3 +175,112 @@ def obtener_detalles_emparejamiento(afiliado1, afiliado2):
 def delete_all_afiliados():
     afiliados_service.delete_all()
     return jsonify({"success": True, "message": "Todos los afiliados eliminados correctamente"})
+
+
+@bp.route('/afiliados/crear', methods=['POST'])
+@handle_errors
+def crear_afiliado():
+    """Crea un nuevo afiliado"""
+    try:
+        datos = request.json
+        
+        # Validar datos requeridos
+        campos_requeridos = ['numero', 'nombre', 'apellido_paterno', 'apellido_materno', 'dni']
+        for campo in campos_requeridos:
+            if campo not in datos or not datos[campo]:
+                raise ValidationError(f"El campo {campo} es requerido")
+        
+        # Verificar si ya existe un afiliado con el mismo número o DNI
+        afiliado_existente = Afiliado.query.filter(
+            (Afiliado.numero == datos['numero']) | 
+            (Afiliado.dni == datos['dni'])
+        ).first()
+        
+        if afiliado_existente:
+            if afiliado_existente.numero == datos['numero']:
+                raise ValidationError(f"Ya existe un afiliado con el número {datos['numero']}")
+            else:
+                raise ValidationError(f"Ya existe un afiliado con el DNI {datos['dni']}")
+        
+        # Crear nuevo afiliado
+        nuevo_afiliado = Afiliado(
+            numero=datos['numero'],
+            nombre=datos['nombre'],
+            apellido_paterno=datos['apellido_paterno'],
+            apellido_materno=datos['apellido_materno'],
+            dni=datos['dni'],
+            email=datos.get('email', ''),
+            estado=datos.get('estado', 'Activo')
+        )
+        
+        db.session.add(nuevo_afiliado)
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Afiliado creado correctamente",
+            "data": nuevo_afiliado.to_dict()
+        })
+        
+    except ValidationError as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error en crear_afiliado: {str(e)}")
+        return jsonify({"success": False, "error": "Error al crear el afiliado"}), 500
+
+@bp.route('/afiliados/<int:id>', methods=['PUT'])
+@handle_errors
+def actualizar_afiliado(id):
+    """Actualiza un afiliado existente"""
+    try:
+        afiliado = Afiliado.query.get(id)
+        if not afiliado:
+            raise ValidationError("Afiliado no encontrado")
+        
+        datos = request.json
+        
+        # Validar datos requeridos
+        campos_requeridos = ['numero', 'nombre', 'apellido_paterno', 'apellido_materno', 'dni']
+        for campo in campos_requeridos:
+            if campo not in datos or not datos[campo]:
+                raise ValidationError(f"El campo {campo} es requerido")
+        
+        # Si cambia el número o DNI, verificar que no exista otro afiliado con esos valores
+        if (datos['numero'] != afiliado.numero or datos['dni'] != afiliado.dni):
+            afiliado_existente = Afiliado.query.filter(
+                ((Afiliado.numero == datos['numero']) | (Afiliado.dni == datos['dni'])) &
+                (Afiliado.id != id)
+            ).first()
+            
+            if afiliado_existente:
+                if afiliado_existente.numero == datos['numero']:
+                    raise ValidationError(f"Ya existe otro afiliado con el número {datos['numero']}")
+                else:
+                    raise ValidationError(f"Ya existe otro afiliado con el DNI {datos['dni']}")
+        
+        # Actualizar campos
+        afiliado.numero = datos['numero']
+        afiliado.nombre = datos['nombre']
+        afiliado.apellido_paterno = datos['apellido_paterno']
+        afiliado.apellido_materno = datos['apellido_materno']
+        afiliado.dni = datos['dni']
+        afiliado.email = datos.get('email', '')
+        afiliado.estado = datos.get('estado', 'Activo')
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Afiliado actualizado correctamente",
+            "data": afiliado.to_dict()
+        })
+        
+    except ValidationError as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error en actualizar_afiliado: {str(e)}")
+        return jsonify({"success": False, "error": "Error al actualizar el afiliado"}), 500
