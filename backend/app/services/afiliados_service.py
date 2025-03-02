@@ -213,12 +213,12 @@ class AfiliadosService(BaseService):
                 'valor_busqueda': afiliado.nombre
             } for afiliado in afiliados]
         
-def delete_all(self):
-    """Elimina todos los afiliados"""
-    try:
-        db.session.query(Afiliado).delete()
-        db.session.commit()
-        return True
-    except Exception as e:
-        db.session.rollback()
-        raise ProcessingError(f"Error eliminando afiliados: {str(e)}")
+    def delete_all(self):
+        """Elimina todos los afiliados"""
+        try:
+            db.session.query(Afiliado).delete()
+            db.session.commit()
+            return True
+        except Exception as e:
+            db.session.rollback()
+            raise ProcessingError(f"Error eliminando afiliados: {str(e)}")

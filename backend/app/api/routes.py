@@ -171,12 +171,5 @@ def obtener_detalles_emparejamiento(afiliado1, afiliado2):
 @bp.route('/delete_all_afiliados', methods=['DELETE'])
 @handle_errors
 def delete_all_afiliados():
-    """Elimina todos los afiliados"""
-    try:
-        db.session.query(Afiliado).delete()
-        db.session.commit()
-        return jsonify({"success": True, "message": "Todos los afiliados eliminados correctamente"})
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error en delete_all_afiliados: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+    afiliados_service.delete_all()
+    return jsonify({"success": True, "message": "Todos los afiliados eliminados correctamente"})
