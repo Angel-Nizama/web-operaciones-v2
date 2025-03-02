@@ -284,3 +284,14 @@ def actualizar_afiliado(id):
         db.session.rollback()
         current_app.logger.error(f"Error en actualizar_afiliado: {str(e)}")
         return jsonify({"success": False, "error": "Error al actualizar el afiliado"}), 500
+    
+@bp.route('/afiliados/actualizar-estados', methods=['POST'])
+@handle_errors
+def actualizar_estados_afiliados():
+    """Actualiza el estado de los afiliados basado en su participación en operaciones recientes"""
+    try:
+        resultado = afiliados_service.actualizar_estados_por_actividad()
+        return jsonify(resultado)
+    except Exception as e:
+        current_app.logger.error(f"Error en actualizar_estados_afiliados: {str(e)}")
+        return jsonify({"success": False, "error": "Error al actualizar estados"}), 500

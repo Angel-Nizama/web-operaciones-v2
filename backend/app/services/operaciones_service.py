@@ -109,10 +109,23 @@ class OperacionesService(BaseService):
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
 
-        return {
+        result = {
             "processed_files": processed_files,
             "total_records": total_records
         }
+        
+        # Actualizar estados de afiliados basados en actividad reciente
+        try:
+            from app.services import afiliados_service
+            current_app.logger.info("Actualizando estados de afiliados tras procesar operaciones")
+            afiliados_service.actualizar_estados_por_actividad()
+            current_app.logger.info("Estados de afiliados actualizados correctamente")
+        except Exception as e:
+            current_app.logger.error(f"Error actualizando estados tras procesar operaciones: {str(e)}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
+        
+        return result
 
     def get_historico(self, filtros):
         """Obtiene el histórico de operaciones con filtros"""
