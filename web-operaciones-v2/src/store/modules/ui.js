@@ -54,6 +54,11 @@ export default {
         state.mensajes = state.mensajes.filter(m => m.id !== id);
       },
       
+      // Eliminar todos los mensajes
+      REMOVE_ALL_MENSAJES(state) {
+        state.mensajes = [];
+      },
+      
       // Mostrar confirmación
       SHOW_CONFIRMACION(state, { mensaje, callback }) {
         state.confirmacion = {

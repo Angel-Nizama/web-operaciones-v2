@@ -1,5 +1,6 @@
 from flask import jsonify, request, current_app
 import json
+import time  # Asegúrate de que este import esté presente
 from werkzeug.utils import secure_filename
 from app.api import bp
 from app.services.operaciones_service import OperacionesService
@@ -294,18 +295,61 @@ def calcular_emparejamientos():
     Versión mejorada que acepta configuraciones de ponderación 
     y filtros adicionales en el request
     """
-    filtros = request.json or {}
+    import time  # Aseguramos que time está importado
     
-    # Verificar si se está solicitando el algoritmo avanzado
-    usar_algoritmo_avanzado = filtros.get('usar_algoritmo_avanzado', False)
-    
-    # Extender el log para diagnóstico
-    if usar_algoritmo_avanzado:
-        current_app.logger.info(f"Calculando emparejamientos con algoritmo avanzado: {filtros}")
-    else:
-        current_app.logger.info(f"Calculando emparejamientos con algoritmo estándar: {filtros}")
-    
-    return jsonify(emparejamiento_service.calcular_emparejamientos(filtros))
+    try:
+        # Extraer configuración y filtros del request
+        filtros = request.json or {}
+        
+        # Verificar si se está solicitando el algoritmo avanzado
+        usar_algoritmo_avanzado = filtros.get('usar_algoritmo_avanzado', False)
+        
+        # Parámetros de paginación (límite y offset)
+        limite = filtros.get('limite', 1000)  # Límite predeterminado de resultados
+        
+        # Parámetros para cálculo de riesgo
+        dias_minimos = filtros.get('dias_minimos', 1)
+        riesgo_maximo = filtros.get('riesgo_maximo', 50)
+        monto_minimo = filtros.get('monto_minimo', 0)
+        monto_maximo = filtros.get('monto_maximo', 0)
+        
+        # Ponderaciones para el algoritmo avanzado
+        ponderaciones = filtros.get('ponderaciones', {
+            'dias': 0.4,
+            'diversidad': 0.25,
+            'operaciones': 0.25,
+            'patron': 0.1
+        })
+        
+        # Extender el log para diagnóstico
+        if usar_algoritmo_avanzado:
+            current_app.logger.info(f"Calculando emparejamientos con algoritmo avanzado: {filtros}")
+        else:
+            current_app.logger.info(f"Calculando emparejamientos con algoritmo estándar: {filtros}")
+        
+        # Ejecutar el cálculo de emparejamientos con tiempo límite
+        start_time = time.time()
+        
+        resultados = emparejamiento_service.calcular_emparejamientos(filtros)
+        
+        # Registrar tiempo de ejecución para monitoreo
+        execution_time = time.time() - start_time
+        current_app.logger.info(f"Cálculo completado en {execution_time:.2f} segundos. Resultados: {len(resultados.get('data', []))}")
+        
+        # Añadir tiempo de ejecución a la respuesta
+        resultados['execution_time'] = execution_time
+        
+        return jsonify(resultados)
+        
+    except Exception as e:
+        current_app.logger.error(f"Error en calcular_emparejamientos: {str(e)}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False, 
+            "error": str(e),
+            "message": "Se produjo un error al calcular emparejamientos"
+        }), 500
 
 @bp.route('/emparejador/detalles/<afiliado1>/<afiliado2>', methods=['GET'])
 @handle_errors

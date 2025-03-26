@@ -1,4 +1,5 @@
 import emparejadorService from '@/services/emparejadorService';
+import api from '@/services/api'; // Añadir esta importación
 
 export default {
   namespaced: true,
@@ -273,9 +274,11 @@ export default {
      */
     async calcularEmparejamientos({ commit, state }) {
       try {
+        // Indicar inicio de carga
         commit('SET_CARGANDO_EMPAREJAMIENTOS', true);
         commit('SET_ERROR', null);
         
+        // Preparar los filtros para el cálculo
         const filtros = {
           dias_minimos: state.configuracion.diasMinimos,
           riesgo_maximo: state.configuracion.riesgoMaximo,
@@ -286,29 +289,46 @@ export default {
             diversidad: state.configuracion.ponderacionDiversidad,
             operaciones: state.configuracion.ponderacionOperaciones,
             patron: state.configuracion.ponderacionPatron
-          }
+          },
+          usar_algoritmo_avanzado: true,
+          limite: 1000 // Limitar número de resultados para mejor rendimiento
         };
         
+        // Usar el servicio normal en lugar de API directamente
         const response = await emparejadorService.calcularEmparejamientos(filtros);
         
         if (response.success) {
-          commit('SET_RESULTADOS_EMPAREJAMIENTO', response.data);
+          // Guardar los resultados en el store
+          commit('SET_RESULTADOS_EMPAREJAMIENTO', response.data || []);
           
-          // Almacenar historial para análisis posterior
+          // Almacenar historial para análisis posterior si está disponible
           if (response.historial) {
             commit('SET_HISTORIAL_OPERACIONES', response.historial);
           }
           
-          return { success: true };
+          return { success: true, message: "Emparejamientos calculados exitosamente", executionTime: response.execution_time };
         } else {
-          commit('SET_ERROR', 'Error al calcular emparejamientos');
-          return { success: false, message: 'Error al calcular emparejamientos' };
+          commit('SET_ERROR', response.error || 'Error al calcular emparejamientos');
+          return { 
+            success: false, 
+            message: response.message || 'Error al calcular emparejamientos' 
+          };
         }
       } catch (error) {
-        commit('SET_ERROR', error.message || 'Error de conexión');
+        // Manejar errores específicos
+        let errorMessage = 'Error de conexión';
+        
+        if (error.name === 'AbortError') {
+          errorMessage = 'La operación ha excedido el tiempo límite. Por favor, intente con filtros más restrictivos.';
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        commit('SET_ERROR', errorMessage);
         console.error('Error en calcularEmparejamientos:', error);
-        return { success: false, message: error.message || 'Error de conexión' };
+        return { success: false, message: errorMessage };
       } finally {
+        // Siempre finalizar el estado de carga
         commit('SET_CARGANDO_EMPAREJAMIENTOS', false);
       }
     },

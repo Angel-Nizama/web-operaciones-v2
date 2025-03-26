@@ -75,7 +75,9 @@ export default {
     };
     
     return api.post('/emparejador/calcular', parametros);
-  },
+  }
+  
+  ,
   
   /**
    * Obtiene detalles de un emparejamiento específico con opciones avanzadas

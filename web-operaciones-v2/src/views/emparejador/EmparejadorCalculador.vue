@@ -144,7 +144,7 @@
         <button 
           id="calcular-emparejamientos" 
           class="btn btn-primario"
-          @click="calcularEmparejamientos"
+          @click="iniciarCalculoEmparejamientos"
           :disabled="cargando || !isPonderacionValid"
         >
           <span v-if="!cargando">Calcular Emparejamientos</span>
@@ -604,23 +604,55 @@ export default {
       'mostrarError'
     ]),
     
-    async calcularEmparejamientos() {
+    // Método modificado para evitar recursión infinita
+    async iniciarCalculoEmparejamientos() {
       try {
+        // Validar configuración antes de proceder
+        if (!this.isPonderacionValid) {
+          this.mostrarError('La suma de ponderaciones debe ser 100%. Por favor, ajuste los valores.');
+          return;
+        }
+        
         // Actualizar configuración en el store
         this.actualizarConfiguracion(this.configuracionLocal);
         
-        // Calcular emparejamientos
-        const resultado = await this.calcularEmparejamientos();
+        // Mostrar mensaje de procesamiento
+        this.mostrarMensaje({
+          texto: "Calculando emparejamientos, esto puede tomar unos momentos...",
+          tipo: "info",
+          duracion: 0 // No auto-cerrar
+        });
         
-        if (resultado.success) {
-          this.mostrarExito('Emparejamientos calculados exitosamente');
-          this.ordenarPor('riesgo'); // Ordenar resultados iniciales
+        // Calcular emparejamientos
+        const resultado = await this.$store.dispatch('emparejador/calcularEmparejamientos');
+        
+        // Remover mensaje de procesamiento
+        this.$store.commit('ui/REMOVE_ALL_MENSAJES');
+        
+        if (resultado && resultado.success) {
+          // Mostrar mensaje de éxito con tiempo de ejecución si está disponible
+          const tiempoEjecucion = resultado.executionTime 
+            ? ` (completado en ${resultado.executionTime.toFixed(2)} segundos)` 
+            : '';
+          
+          this.mostrarExito(`Emparejamientos calculados exitosamente${tiempoEjecucion}`);
+          
+          // Ordenar resultados iniciales
+          this.ordenarPor('riesgo');
+          
+          // Volver a la primera página
           this.paginaActual = 1;
         } else {
-          this.mostrarError(resultado.message || 'Error al calcular emparejamientos');
+          // Mostrar error
+          this.mostrarError(resultado && resultado.message ? resultado.message : 'Error al calcular emparejamientos');
         }
       } catch (error) {
-        this.mostrarError('Error al calcular emparejamientos');
+        // Remover mensaje de procesamiento
+        this.$store.commit('ui/REMOVE_ALL_MENSAJES');
+        
+        // Mostrar error
+        this.mostrarError('Error al calcular emparejamientos: ' + (error && error.message ? error.message : 'Error desconocido'));
+        console.error('Error en iniciarCalculoEmparejamientos:', error);
       }
     },
     
